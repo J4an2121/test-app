@@ -2,7 +2,6 @@
 import streamlit as st
 import pandas as pd
 import io
-import numpy as np
 
 # ------------------------------
 # CONFIGURACIÓN DE LA PÁGINA
@@ -47,19 +46,16 @@ if nav_file and banco_file:
             nav[col_nav] = pd.to_numeric(nav[col_nav], errors="coerce")
             banco[col_banco] = pd.to_numeric(banco[col_banco], errors="coerce")
 
-            # Limpiar nulos
-            nav_clean = nav[[col_nav]].dropna()
-            banco_clean = banco[[col_banco]].dropna()
+            # Limpiar nulos y renombrar columnas
+            nav_clean = nav[[col_nav]].dropna().rename(columns={col_nav: "Monto"})
+            banco_clean = banco[[col_banco]].dropna().rename(columns={col_banco: "Monto"})
 
-            # Crear columnas con etiquetas
+            # Agregar fuente
             nav_clean["Fuente"] = "NAV"
             banco_clean["Fuente"] = "BANCO"
 
             # Concatenar para análisis
-            todos = pd.concat([
-                nav_clean.rename(columns={col_nav: "Monto"}),
-                banco_clean.rename(columns={col_banco: "Monto"})
-            ])
+            todos = pd.concat([nav_clean, banco_clean])
 
             # Contar ocurrencias y clasificar
             conteo = todos.groupby("Monto")["Fuente"].apply(list).reset_index()
@@ -67,7 +63,7 @@ if nav_file and banco_file:
                 lambda x: "✅ MATCH" if len(set(x)) > 1 else "❌ NO MATCH"
             )
 
-            # Identificar no coincidencias por archivo
+            # Identificar no coincidencias
             nav_unmatched = nav_clean[~nav_clean["Monto"].isin(banco_clean["Monto"])]
             banco_unmatched = banco_clean[~banco_clean["Monto"].isin(nav_clean["Monto"])]
 
@@ -95,6 +91,7 @@ if nav_file and banco_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
+            st.success("Conciliación realizada 🎉")
 
 
 
