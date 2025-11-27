@@ -2,19 +2,60 @@
 import streamlit as st
 import pandas as pd
 import io
+from decimal import Decimal, ROUND_HALF_UP
 
 # ------------------------------
 # CONFIGURACIÓN DE LA PÁGINA
 # ------------------------------
 st.set_page_config(page_title="Conciliación NAV vs BANCO", layout="centered")
 st.title("📊 Conciliador Automático NAV vs BANCO")
-st.write("Sube tus archivos para realizar la conciliación por montos.")
+st.write("Sube tus archivos para realizar la conciliación por montos (MATCH / NO MATCH).")
 
 # ------------------------------
 # SUBIDA DE ARCHIVOS
 # ------------------------------
 nav_file = st.file_uploader("📤 Cargar archivo NAV", type=["xlsx", "xls"])
 banco_file = st.file_uploader("📤 Cargar archivo BANCO", type=["xlsx", "xls"])
+
+# ------------------------------
+# FUNCIONES AUXILIARES
+# ------------------------------
+def to_decimal_normalized(x):
+    """
+    Normaliza cadenas/números a Decimal con 2 decimales.
+    - Elimina separadores de miles, espacios, signos de moneda.
+    - Redondea HALF_UP a 2 decimales para evitar problemas de float.
+    """
+    if pd.isna(x):
+        return None
+    try:
+        s = str(x).strip()
+        # remover símbolos comunes
+        for ch in [",", " ", "$"]:
+            s = s.replace(ch, "")
+        # si hay paréntesis de negativos (estilo contable)
+        if s.startswith("(") and s.endswith(")"):
+            s = "-" + s[1:-1]
+
+        val = Decimal(s)
+        return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except Exception:
+        # intento con float por si viene ya numérico
+        try:
+            val = Decimal(float(x))
+            return val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        except Exception:
+            return None
+
+def normalize_amount_column(df, col_name, new_name="Monto"):
+    """
+    Crea una columna 'Monto' normalizada a Decimal(2) desde col_name.
+    Retorna df limpio con la columna normalizada y sin nulos.
+    """
+    tmp = df.copy()
+    tmp[new_name] = tmp[col_name].apply(to_decimal_normalized)
+    tmp = tmp.dropna(subset=[new_name])
+    return tmp
 
 # ------------------------------
 # LÓGICA CUANDO SE SUBEN AMBOS ARCHIVOS
@@ -27,67 +68,103 @@ if nav_file and banco_file:
     st.success("Archivos cargados correctamente ✅")
 
     st.subheader("📘 Vista previa NAV")
-    st.dataframe(nav.head())
+    st.dataframe(nav.head(10))
 
     st.subheader("🏦 Vista previa BANCO")
-    st.dataframe(banco.head())
+    st.dataframe(banco.head(10))
 
     st.subheader("🧩 Selecciona la columna de montos")
-    col_nav = st.selectbox("Columna de monto en NAV", nav.columns)
-    col_banco = st.selectbox("Columna de monto en BANCO", banco.columns)
+    col_nav = st.selectbox("Columna de monto en NAV", nav.columns, key="col_nav")
+    col_banco = st.selectbox("Columna de monto en BANCO", banco.columns, key="col_banco")
 
-    if st.button("🔍 Realizar Match por Montos"):
+    # Opcional: columnas de contexto para visualizar en la tabla de resultados
+    st.subheader("📎 (Opcional) Selecciona columnas de referencia para mostrar")
+    ref_nav = st.multiselect("Columnas de referencia NAV", nav.columns, default=[c for c in ["Document No.", "Posting Date", "Description"] if c in nav.columns])
+    ref_banco = st.multiselect("Columnas de referencia BANCO", banco.columns, default=[c for c in ["Document No.", "Posting Date", "Description"] if c in banco.columns])
 
+    ver_solo_match = st.checkbox("👀 Mostrar solo los registros que hacen MATCH", value=True)
+
+    if st.button("🔍 Realizar Match por Montos", type="primary"):
         with st.spinner("Realizando conciliación..."):
 
-            # Convertir a número
-            nav[col_nav] = pd.to_numeric(nav[col_nav], errors="coerce")
-            banco[col_banco] = pd.to_numeric(banco[col_banco], errors="coerce")
+            # 1) Normalizar montos a Decimal(2)
+            nav_norm = normalize_amount_column(nav, col_nav, "Monto")
+            banco_norm = normalize_amount_column(banco, col_banco, "Monto")
 
-            # Limpiar nulos y renombrar
-            nav_clean = nav.dropna(subset=[col_nav]).copy()
-            banco_clean = banco.dropna(subset=[col_banco]).copy()
+            # Métricas de nulos convertidos
+            nav_nulos = nav[col_nav].isna().sum()
+            banco_nulos = banco[col_banco].isna().sum()
+            if nav_nulos > 0:
+                st.warning(f"NAV: {nav_nulos} valores nulos en '{col_nav}' (se excluyen).")
+            if banco_nulos > 0:
+                st.warning(f"BANCO: {banco_nulos} valores nulos en '{col_banco}' (se excluyen).")
 
-            nav_clean.rename(columns={col_nav: "Monto"}, inplace=True)
-            banco_clean.rename(columns={col_banco: "Monto"}, inplace=True)
+            # 2) Manejo de duplicados: crear índice por ocurrencia
+            nav_norm["idx"] = nav_norm.groupby("Monto").cumcount()
+            banco_norm["idx"] = banco_norm.groupby("Monto").cumcount()
 
-            # Crear índice para manejar duplicados
-            nav_clean["idx"] = nav_clean.groupby("Monto").cumcount()
-            banco_clean["idx"] = banco_clean.groupby("Monto").cumcount()
+            # 3) Adjuntar columnas de referencia para contexto
+            #    Sufijos para distinguir columnas
+            nav_show = nav_norm[[*ref_nav, "Monto", "idx"]] if ref_nav else nav_norm[["Monto", "idx"]]
+            banco_show = banco_norm[[*ref_banco, "Monto", "idx"]] if ref_banco else banco_norm[["Monto", "idx"]]
+            # Renombrar columnas de contexto con sufijos
+            nav_show = nav_show.rename(columns={c: f"{c}_NAV" for c in ref_nav})
+            banco_show = banco_show.rename(columns={c: f"{c}_BANCO" for c in ref_banco})
 
-            # Merge para emparejar ocurrencias
-            conciliado = pd.merge(
-                nav_clean, banco_clean,
-                on=["Monto", "idx"], how="outer", indicator=True,
-                suffixes=("_NAV", "_BANCO")
+            # 4) Merge exterior por (Monto, idx) → emparejamiento 1 a 1
+            merged = pd.merge(
+                nav_show, banco_show, on=["Monto", "idx"], how="outer", indicator=True
             )
 
-            # Estado MATCH / NO MATCH
-            conciliado["Estado"] = conciliado["_merge"].map({
+            merged["Estado"] = merged["_merge"].map({
                 "both": "✅ MATCH",
                 "left_only": "❌ NO MATCH (solo NAV)",
                 "right_only": "❌ NO MATCH (solo BANCO)"
             })
 
-            # Mostrar resultado completo
+            # 5) Orden y visualización
+            #    Primero los MATCH si el toggle está activo
+            if ver_solo_match:
+                view_df = merged[merged["Estado"] == "✅ MATCH"].copy()
+            else:
+                view_df = merged.copy()
+
+            # Ordenar por Monto y idx
+            view_df = view_df.sort_values(by=["Estado", "Monto", "idx"], ascending=[True, True, True])
+
             st.subheader("📄 Resultado del Match (detalle)")
-            st.dataframe(conciliado[["Monto", "Estado", "Document No._NAV", "Document No._BANCO"]])
+            st.dataframe(view_df)
 
-            # Separar no coincidencias
-            nav_unmatched = conciliado[conciliado["Estado"] == "❌ NO MATCH (solo NAV)"]
-            banco_unmatched = conciliado[conciliado["Estado"] == "❌ NO MATCH (solo BANCO)"]
+            # 6) Preparar hojas para Excel
+            match_df = merged[merged["Estado"] == "✅ MATCH"].sort_values(["Monto", "idx"])
+            nav_unmatched_df = merged[merged["Estado"] == "❌ NO MATCH (solo NAV)"].sort_values(["Monto", "idx"])
+            banco_unmatched_df = merged[merged["Estado"] == "❌ NO MATCH (solo BANCO)"].sort_values(["Monto", "idx"])
 
-            # Exportar a Excel
+            # 7) Exportación
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                conciliado.to_excel(writer, index=False, sheet_name="Conciliacion")
-                nav_unmatched.to_excel(writer, index=False, sheet_name="NAV sin match")
-                banco_unmatched.to_excel(writer, index=False, sheet_name="BANCO sin match")
+                match_df.to_excel(writer, index=False, sheet_name="MATCH (detalle)")
+                nav_unmatched_df.to_excel(writer, index=False, sheet_name="NAV sin match")
+                banco_unmatched_df.to_excel(writer, index=False, sheet_name="BANCO sin match")
 
             st.download_button(
-                label="📥 Descargar resultado en Excel",
+                label="📥 Descargar conciliación en Excel",
                 data=output.getvalue(),
                 file_name="conciliacion_NAV_vs_BANCO.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
+            # 8) Métricas rápidas
+            total_matches = len(match_df)
+            total_nav_only = len(nav_unmatched_df)
+            total_banco_only = len(banco_unmatched_df)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Emparejamientos (MATCH)", total_matches)
+            c2.metric("Sin match (NAV)", total_nav_only)
+            c3.metric("Sin match (BANCO)", total_banco_only)
+
+            st.success("Conciliación realizada 🎉")
+
+
+
+          
