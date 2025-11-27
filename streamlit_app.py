@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import numpy as np
 
 # ------------------------------
 # CONFIGURACIÓN DE LA PÁGINA
@@ -21,7 +22,6 @@ banco_file = st.file_uploader("📤 Cargar archivo BANCO", type=["xlsx", "xls"])
 # ------------------------------
 if nav_file and banco_file:
 
-    # Leer archivos
     nav = pd.read_excel(nav_file)
     banco = pd.read_excel(banco_file)
 
@@ -33,49 +33,47 @@ if nav_file and banco_file:
     st.subheader("🏦 Vista previa BANCO")
     st.dataframe(banco.head())
 
-    # Selección de columnas para match
-    st.subheader("🧩 Selecciona la columna de monto en cada archivo")
+    st.subheader("🧩 Selecciona la columna de montos")
 
     col_nav = st.selectbox("Columna de monto en NAV", nav.columns)
     col_banco = st.selectbox("Columna de monto en BANCO", banco.columns)
 
-    # Botón ejecutar
     if st.button("🔍 Realizar Match por Montos"):
 
-        # Convertir columnas a numérico
+        # Convertir a número
         nav[col_nav] = pd.to_numeric(nav[col_nav], errors="coerce")
         banco[col_banco] = pd.to_numeric(banco[col_banco], errors="coerce")
 
-        # DataFrames simplificados
-        nav2 = nav[[col_nav]].rename(columns={col_nav: "NAV_monto"})
-        banco2 = banco[[col_banco]].rename(columns={col_banco: "BANCO_monto"})
+        # Listas de valores
+        nav_list = nav[col_nav].dropna().tolist()
+        banco_list = banco[col_banco].dropna().tolist()
 
-        # FULL OUTER JOIN → trae matches y no matches
-        resultado = nav2.merge(
-            banco2,
-            left_on="NAV_monto",
-            right_on="BANCO_monto",
-            how="outer"
-        )
+        # Hacer que tengan la misma longitud
+        max_len = max(len(nav_list), len(banco_list))
+        nav_list.extend([np.nan] * (max_len - len(nav_list)))
+        banco_list.extend([np.nan] * (max_len - len(banco_list)))
+
+        # Crear DataFrame alineado
+        resultado = pd.DataFrame({
+            "NAV_monto": nav_list,
+            "BANCO_monto": banco_list
+        })
 
         # Columna MATCH / NO MATCH
         resultado["MATCH"] = resultado.apply(
-            lambda x: "✅ MATCH" if pd.notnull(x["NAV_monto"]) and pd.notnull(x["BANCO_monto"]) else "❌ NO MATCH",
+            lambda row: "✅ MATCH" if row["NAV_monto"] == row["BANCO_monto"] else "❌ NO MATCH",
             axis=1
         )
 
-        # Mostrar tabla
-        st.subheader("📄 Resultado del Match (columnas independientes)")
+        st.subheader("📄 Resultado del Match (lado a lado)")
         st.dataframe(resultado)
 
-        # ------------------------------
-        # CREAR ARCHIVO EXCEL EN MEMORIA
-        # ------------------------------
+        # Crear Excel en memoria
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             resultado.to_excel(writer, index=False, sheet_name="Conciliacion")
 
-        # Botón descargar
+        # Descarga
         st.download_button(
             label="📥 Descargar resultado en Excel",
             data=output.getvalue(),
@@ -83,7 +81,8 @@ if nav_file and banco_file:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        st.success("Conciliación completada con MATCH / NO MATCH 🎉")
+        st.success("Conciliación realizada 🎉")
+
 
 
 
