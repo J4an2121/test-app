@@ -33,40 +33,62 @@ if nav_file and banco_file:
     st.dataframe(banco.head())
 
     # Selección de columnas para match
-    st.subheader("🧩 Selecciona la columna de monto en cada archivo")
+    st.subheader("🧩 Selecciona la columnas requeridas  en cada archivo")
 
     col_nav = st.selectbox("Columna de monto en NAV", nav.columns)
     col_banco = st.selectbox("Columna de monto en BANCO", banco.columns)
 
     if st.button("🔍 Realizar Match por Montos"):
 
-        # Convertir todo a numérico por seguridad
+        # Convertir columnas a número
         nav[col_nav] = pd.to_numeric(nav[col_nav], errors="coerce")
         banco[col_banco] = pd.to_numeric(banco[col_banco], errors="coerce")
 
-        # Hacer match por montos
-        resultado = nav.merge(
+        # ----------------------------------------
+        # 1️⃣ MATCH POR MONTOS
+        # ----------------------------------------
+        match = nav.merge(
             banco,
             left_on=col_nav,
             right_on=col_banco,
             how="inner",
             suffixes=("_NAV", "_BANCO")
         )
+        match["Estado"] = "MATCH"
 
-        st.subheader("📄 Resultado del Match")
-        st.dataframe(resultado)
+        # ----------------------------------------
+        # 2️⃣ NO CONCILIADOS EN NAV
+        # ----------------------------------------
+        no_nav = nav[~nav[col_nav].isin(banco[col_banco])]
+        no_nav["Estado"] = "NO CONCILIADO (NAV)"
+
+        # ----------------------------------------
+        # 3️⃣ NO CONCILIADOS EN BANCO
+        # ----------------------------------------
+        no_banco = banco[~banco[col_banco].isin(nav[col_nav])]
+        no_banco["Estado"] = "NO CONCILIADO (BANCO)"
+
+        # ----------------------------------------
+        # UNIR TODO EN UN SOLO ARCHIVO
+        # ----------------------------------------
+        resultado_final = pd.concat([match, no_nav, no_banco], ignore_index=True)
+
+        st.subheader("📄 Resultado Completo")
+        st.dataframe(resultado_final)
 
         # Descargar Excel
         output = pd.ExcelWriter("resultado_conciliacion.xlsx", engine='xlsxwriter')
-        resultado.to_excel(output, index=False, sheet_name="Conciliacion")
+        resultado_final.to_excel(output, index=False, sheet_name="Resultado")
         output.save()
 
         with open("resultado_conciliacion.xlsx", "rb") as f:
             st.download_button(
-                label="📥 Descargar resultado en Excel",
+                label="📥 Descargar archivo conciliado",
                 data=f,
                 file_name="conciliacion_NAV_vs_BANCO.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-        st.success("Conciliación realizada y archivo listo para descargar 🎉")
+        st.success("Conciliación realizada con éxito 🎉")
+
+
