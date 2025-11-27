@@ -1,13 +1,12 @@
+
 import streamlit as st
 import pandas as pd
 import io
-import numpy as np
 
 # ------------------------------
 # CONFIGURACIÓN DE LA PÁGINA
 # ------------------------------
 st.set_page_config(page_title="Conciliación NAV vs BANCO", layout="centered")
-
 st.title("📊 Conciliador Automático NAV vs BANCO")
 st.write("Sube tus archivos para realizar la conciliación por montos.")
 
@@ -33,52 +32,62 @@ if nav_file and banco_file:
     st.subheader("🏦 Vista previa BANCO")
     st.dataframe(banco.head())
 
-    st.subheader("🧩 Selecciona la columna ")
-
-    col_nav = st.selectbox("Columna de en NAV", nav.columns)
-    col_banco = st.selectbox("Columna de  en BANCO", banco.columns)
+    st.subheader("🧩 Selecciona la columna de montos")
+    col_nav = st.selectbox("Columna de monto en NAV", nav.columns)
+    col_banco = st.selectbox("Columna de monto en BANCO", banco.columns)
 
     if st.button("🔍 Realizar Match por Montos"):
 
-        # Convertir a número
-        nav[col_nav] = pd.to_numeric(nav[col_nav], errors="coerce")
-        banco[col_banco] = pd.to_numeric(banco[col_banco], errors="coerce")
+        with st.spinner("Realizando conciliación..."):
 
-        # Listas de valores
-        nav_list = nav[col_nav].dropna().tolist()
-        banco_list = banco[col_banco].dropna().tolist()
+            # Convertir a número
+            nav[col_nav] = pd.to_numeric(nav[col_nav], errors="coerce")
+            banco[col_banco] = pd.to_numeric(banco[col_banco], errors="coerce")
 
-        # Hacer que tengan la misma longitud
-        max_len = max(len(nav_list), len(banco_list))
-        nav_list.extend([np.nan] * (max_len - len(nav_list)))
-        banco_list.extend([np.nan] * (max_len - len(banco_list)))
+            # Limpiar nulos y renombrar
+            nav_clean = nav.dropna(subset=[col_nav]).copy()
+            banco_clean = banco.dropna(subset=[col_banco]).copy()
 
-        # Crear DataFrame alineado
-        resultado = pd.DataFrame({
-            "NAV_monto": nav_list,
-            "BANCO_monto": banco_list
-        })
+            nav_clean.rename(columns={col_nav: "Monto"}, inplace=True)
+            banco_clean.rename(columns={col_banco: "Monto"}, inplace=True)
 
-        # Columna MATCH / NO MATCH
-        resultado["MATCH"] = resultado.apply(
-            lambda row: "✅ MATCH" if row["NAV_monto"] == row["BANCO_monto"] else "❌ NO MATCH",
-            axis=1
-        )
+            # Crear índice para manejar duplicados
+            nav_clean["idx"] = nav_clean.groupby("Monto").cumcount()
+            banco_clean["idx"] = banco_clean.groupby("Monto").cumcount()
 
-        st.subheader("📄 Resultado del Match (lado a lado)")
-        st.dataframe(resultado)
+            # Merge para emparejar ocurrencias
+            conciliado = pd.merge(
+                nav_clean, banco_clean,
+                on=["Monto", "idx"], how="outer", indicator=True,
+                suffixes=("_NAV", "_BANCO")
+            )
 
-        # Crear Excel en memoria
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            resultado.to_excel(writer, index=False, sheet_name="Conciliacion")
+            # Estado MATCH / NO MATCH
+            conciliado["Estado"] = conciliado["_merge"].map({
+                "both": "✅ MATCH",
+                "left_only": "❌ NO MATCH (solo NAV)",
+                "right_only": "❌ NO MATCH (solo BANCO)"
+            })
 
-        # Descarga
-        st.download_button(
-            label="📥 Descargar resultado en Excel",
-            data=output.getvalue(),
-            file_name="conciliacion_NAV_vs_BANCO.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+            # Mostrar resultado completo
+            st.subheader("📄 Resultado del Match (detalle)")
+            st.dataframe(conciliado[["Monto", "Estado", "Document No._NAV", "Document No._BANCO"]])
 
-        st.success("Conciliación realizada 🎉")
+            # Separar no coincidencias
+            nav_unmatched = conciliado[conciliado["Estado"] == "❌ NO MATCH (solo NAV)"]
+            banco_unmatched = conciliado[conciliado["Estado"] == "❌ NO MATCH (solo BANCO)"]
+
+            # Exportar a Excel
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                conciliado.to_excel(writer, index=False, sheet_name="Conciliacion")
+                nav_unmatched.to_excel(writer, index=False, sheet_name="NAV sin match")
+                banco_unmatched.to_excel(writer, index=False, sheet_name="BANCO sin match")
+
+            st.download_button(
+                label="📥 Descargar resultado en Excel",
+                data=output.getvalue(),
+                file_name="conciliacion_NAV_vs_BANCO.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
