@@ -10,12 +10,16 @@ from decimal import Decimal, ROUND_HALF_UP
 st.set_page_config(page_title="Conciliación NAV vs BANCO", layout="centered")
 
 # ==============================
-# AUTH BÁSICA (DEMO)
+# AUTH con Secrets (recomendado)
 # ==============================
-USUARIO = "admin"
-CLAVE = "1234"
+# Si usas Streamlit Cloud, define en Settings → Secrets:
+# [auth]
+# user = "admin"
+# pass = "c0ntr@s3gna_Fuerte"
 
-# Inicializa estado de sesión
+USER = st.secrets["auth"]["user"] if "auth" in st.secrets else "admin"
+PASS = st.secrets["auth"]["pass"] if "auth" in st.secrets else "1234"
+
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 
@@ -24,15 +28,21 @@ def login_view():
     usuario = st.text_input("Usuario")
     clave = st.text_input("Contraseña", type="password")
     if st.button("Ingresar"):
-        if usuario == USUARIO and clave == CLAVE:
+        if usuario == USER and clave == PASS:
             st.session_state.autenticado = True
-            st.experimental_rerun()
+            # ✅ Usar la API actual:
+            st.rerun()
         else:
             st.error("Credenciales incorrectas ❌")
 
 def logout_button():
-    st.sidebar.button("Cerrar sesión", on_click=lambda: st.session_state.update({"autenticado": False}))
-    # Puedes limpiar variables sensibles aquí si las usas
+    st.sidebar.button(
+        "Cerrar sesión",
+        on_click=lambda: (
+            st.session_state.update({"autenticado": False}),
+            st.rerun()
+        )
+    )
 
 # Si NO autenticado → mostrar login y salir
 if not st.session_state.autenticado:
@@ -81,6 +91,7 @@ def normalize_amount_column(df, col_name, new_name="Monto"):
 # LÓGICA CUANDO SE SUBEN AMBOS ARCHIVOS
 # ------------------------------
 if nav_file and banco_file:
+
     nav = pd.read_excel(nav_file)
     banco = pd.read_excel(banco_file)
 
@@ -104,6 +115,7 @@ if nav_file and banco_file:
 
     if st.button("🔍 Realizar Match por Montos", type="primary"):
         with st.spinner("Realizando conciliación..."):
+
             nav_norm = normalize_amount_column(nav, col_nav, "Monto")
             banco_norm = normalize_amount_column(banco, col_banco, "Monto")
 
@@ -162,3 +174,4 @@ if nav_file and banco_file:
             c2.metric("Sin match (NAV)", total_nav_only)
             c3.metric("Sin match (BANCO)", total_banco_only)
 
+            st.success("Conciliación realizada 🎉")
