@@ -9,50 +9,14 @@ from decimal import Decimal, ROUND_HALF_UP
 # ------------------------------
 st.set_page_config(page_title="Conciliación NAV vs BANCO", layout="centered")
 
-# ==============================
-# AUTH con Secrets (recomendado)
-# ==============================
-# Si usas Streamlit Cloud, define en Settings → Secrets:
-# [auth]
-# user = "admin"
-# pass = "c0ntr@s3gna_Fuerte"
+
 
 USER = st.secrets["auth"]["user"] if "auth" in st.secrets else "admin"
 PASS = st.secrets["auth"]["pass"] if "auth" in st.secrets else "1234"
 
-#if "autenticado" not in st.session_state:
- #   st.session_state.autenticado = False
 
-#def login_view():
- #   st.title("🔒 Acceso | Conciliación NAV vs BANCO")
-  #  usuario = st.text_input("Usuario")
-   # clave = st.text_input("Contraseña", type="password")
-    #if st.button("Ingresar"):
-     #   if usuario == USER and clave == PASS:
-      #      st.session_state.autenticado = True
-       #     # ✅ Usar la API actual:
-        #    st.rerun()
-        #else:
-         #   st.error("Credenciales incorrectas ❌")
-
-#def logout_button():
- #   st.sidebar.button(
-  #      "Cerrar sesión",
-   #     on_click=lambda: (
-    #        st.session_state.update({"autenticado": False}),
-     #       st.rerun()
-  #      )
- #   )
-
-# Si NO autenticado → mostrar login y salir
-#if not st.session_state.autenticado:
-  #  login_view()
- #   st.stop()
-
-# Si SÍ autenticado → mostrar la app
-#logout_button()
-#st.title("📊 Conciliador Automático NAV vs BANCO")
-#st.write("Sube tus archivos para realizar la conciliación por montos (MATCH / NO MATCH).")
+st.title("📊 Conciliador Automático NAV vs BANCO")
+st.write("Sube tus archivos para realizar la conciliación por montos (MATCH / NO MATCH).")
 
 # ------------------------------
 # SUBIDA DE ARCHIVOS
@@ -175,4 +139,5 @@ if nav_file and banco_file:
             c3.metric("Sin match (BANCO)", total_banco_only)
 
             st.success("Conciliación realizada 🎉")
+
 
